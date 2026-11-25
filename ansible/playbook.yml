@@ -1,0 +1,148 @@
+---
+- name: Implantar API e banco MySQL com Docker na VM2
+  hosts: vm2-api-e-banco
+  become: true
+  vars:
+    api_dir: /opt/api-produtos
+  tasks:
+    - name: Atualizar o cache de pacotes
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Instalar Docker Engine e Docker Compose
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+
+    - name: Iniciar e habilitar o Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Consultar serviços da implantação anterior
+      ansible.builtin.service_facts:
+
+    - name: Parar a API nativa de uma implantação anterior
+      ansible.builtin.service:
+        name: api-produtos
+        state: stopped
+        enabled: false
+      when:
+        - "'api-produtos.service' in ansible_facts.services"
+
+    - name: Parar o MySQL nativo de uma implantação anterior
+      ansible.builtin.service:
+        name: mysql
+        state: stopped
+        enabled: false
+      when:
+        - "'mysql.service' in ansible_facts.services"
+
+    - name: Criar diretório de implantação
+      ansible.builtin.file:
+        path: "{{ api_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copiar arquivos da API e do Compose
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../api/{{ item }}"
+        dest: "{{ api_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - Dockerfile
+        - docker-compose.yml
+        - package.json
+        - schema.sql
+        - server.js
+
+    - name: Verificar se as senhas persistidas já existem
+      ansible.builtin.stat:
+        path: "{{ api_dir }}/.env"
+      register: api_env_file
+
+    - name: Gerar senhas iniciais para os bancos
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - rand
+          - -hex
+          - "48"
+      register: api_db_secret
+      changed_when: false
+      when: not api_env_file.stat.exists
+      no_log: true
+
+    - name: Configurar senhas persistentes do Compose
+      ansible.builtin.copy:
+        dest: "{{ api_dir }}/.env"
+        content: |
+          DB_PASSWORD={{ api_db_secret.stdout[:48] }}
+          MYSQL_ROOT_PASSWORD={{ api_db_secret.stdout[48:] }}
+        owner: root
+        group: root
+        mode: "0600"
+      when: not api_env_file.stat.exists
+      no_log: true
+
+    - name: Implantar API e MySQL com Docker Compose
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - up
+          - --detach
+          - --build
+        chdir: "{{ api_dir }}"
+      register: compose_deploy
+      changed_when: >-
+        'Created' in compose_deploy.stdout or
+        'Started' in compose_deploy.stdout or
+        'Recreated' in compose_deploy.stdout or
+        'Built' in compose_deploy.stdout or
+        'Built' in compose_deploy.stderr
+
+- name: Configurar servidor web na VM1
+  hosts: vm1-aplicacao-web
+  become: true
+  tasks:
+    - name: Atualizar o cache de pacotes
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Instalar Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+
+    - name: Publicar a página de cadastro e consulta
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../app/produtos.html"
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        api_host: "{{ hostvars['vm2-api-e-banco']['ansible_host'] }}"
+      notify: Reiniciar Nginx
+
+    - name: Habilitar e iniciar Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Reiniciar Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

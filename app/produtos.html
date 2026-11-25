@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cadastro de Produtos</title>
+<style>
+:root{
+  --bg:#f5f6f8;--surface:#ffffff;--text:#1b2028;--muted:#5d6875;--border:#d6dbe1;
+  --accent:#1d62d8;--accent-text:#ffffff;--ok:#1b7a3d;--head:#eef1f5;
+  color-scheme:light;box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#11151b;--surface:#1a2029;--text:#e6e9ee;--muted:#9aa5b1;--border:#2d3541;
+    --accent:#5b9cff;--accent-text:#0b1220;--ok:#5fd28a;--head:#222a35;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11151b;--surface:#1a2029;--text:#e6e9ee;--muted:#9aa5b1;--border:#2d3541;
+  --accent:#5b9cff;--accent-text:#0b1220;--ok:#5fd28a;--head:#222a35;color-scheme:dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+nav a{padding:8px 14px;border:1px solid var(--border);border-radius:8px;color:var(--text);text-decoration:none;background:var(--surface)}
+nav a.ativo{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}
+label{display:block;font-weight:600;margin-bottom:4px}
+.campo{margin-bottom:16px}
+input{width:100%;padding:10px 12px;font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:8px}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.dica{font-size:.85rem;color:var(--muted);margin-top:4px}
+.linha{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:520px){.linha{grid-template-columns:1fr}}
+button{font:inherit;font-weight:600;padding:10px 18px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-text);cursor:pointer}
+#msg{margin-top:12px;color:var(--ok);min-height:1.5em}
+.tabela{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:480px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{background:var(--head);font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}
+td.num,th.num{text-align:right}
+.vazio{color:var(--muted);text-align:center;padding:24px 0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cadastro de Produtos</h1>
+  <p class="sub">Cadastre produtos e consulte todos os registros.</p>
+
+  <nav>
+    <a href="#cadastro" id="nav-cadastro">Cadastrar produto</a>
+    <a href="#lista" id="nav-lista">Listar todos os produtos</a>
+  </nav>
+
+  <section id="view-cadastro" class="card">
+    <form id="form" novalidate>
+      <div class="campo">
+        <label for="nome">Nome do produto *</label>
+        <input id="nome" name="nome" type="text" required maxlength="120" autocomplete="off">
+      </div>
+      <div class="campo">
+        <label for="categoria">Categoria *</label>
+        <input id="categoria" name="categoria" type="text" required maxlength="80" autocomplete="off">
+      </div>
+      <div class="linha">
+        <div class="campo">
+          <label for="preco">Preço (R$) *</label>
+          <input id="preco" name="preco" type="number" step="0.01" min="0" inputmode="decimal" required>
+          <div class="dica">Número decimal, ex.: 19,90</div>
+        </div>
+        <div class="campo">
+          <label for="qtd">Quantidade em estoque *</label>
+          <input id="qtd" name="qtd" type="number" step="1" min="0" inputmode="numeric" required>
+          <div class="dica">Número inteiro, ex.: 25</div>
+        </div>
+      </div>
+      <button type="submit">Cadastrar</button>
+      <div id="msg" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section id="view-lista" class="card" hidden>
+    <p id="total" class="sub" style="margin-bottom:12px"></p>
+    <div class="tabela">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Produto</th><th>Categoria</th><th class="num">Preço</th><th class="num">Estoque</th></tr>
+        </thead>
+        <tbody id="corpo"></tbody>
+      </table>
+    </div>
+    <div id="vazio" class="vazio" hidden>Nenhum produto cadastrado ainda.</div>
+    <div id="erro-lista" class="vazio" role="alert" hidden></div>
+  </section>
+</div>
+
+<script>
+const API_URL = 'http://{{ api_host }}:3000';
+const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+
+async function renderLista() {
+  const corpo = document.getElementById('corpo');
+  const erro = document.getElementById('erro-lista');
+  corpo.textContent = '';
+  erro.hidden = true;
+  document.getElementById('vazio').hidden = true;
+  document.getElementById('total').textContent = 'Carregando produtos...';
+
+  try {
+    const resposta = await fetch(`${API_URL}/produtos`);
+    if (!resposta.ok) throw new Error(`Falha ao consultar produtos (HTTP ${resposta.status}).`);
+    const lista = await resposta.json();
+    if (!Array.isArray(lista)) throw new Error('A API retornou uma resposta inválida.');
+
+    lista.forEach((produto, indice) => {
+      const tr = document.createElement('tr');
+      const colunas = [
+        String(indice + 1),
+        produto.nome,
+        produto.categoria,
+        moeda.format(Number(produto.preco)),
+        String(produto.quantidade),
+      ];
+      colunas.forEach((texto, coluna) => {
+        const td = document.createElement('td');
+        if (coluna >= 3) td.className = 'num';
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      corpo.appendChild(tr);
+    });
+    document.getElementById('vazio').hidden = lista.length > 0;
+    document.getElementById('total').textContent =
+      lista.length === 1 ? '1 produto cadastrado' : `${lista.length} produtos cadastrados`;
+  } catch (err) {
+    document.getElementById('total').textContent = '';
+    erro.textContent = `Não foi possível carregar os produtos: ${err.message}`;
+    erro.hidden = false;
+  }
+}
+
+function rotear() {
+  const lista = location.hash === '#lista';
+  document.getElementById('view-cadastro').hidden = lista;
+  document.getElementById('view-lista').hidden = !lista;
+  document.getElementById('nav-cadastro').classList.toggle('ativo', !lista);
+  document.getElementById('nav-lista').classList.toggle('ativo', lista);
+  if (lista) renderLista();
+}
+
+document.getElementById('form').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  const formulario = this;
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+  if (!formulario.reportValidity()) return;
+
+  const produto = {
+    nome: formulario.elements.nome.value.trim(),
+    categoria: formulario.elements.categoria.value.trim(),
+    preco: Number(formulario.elements.preco.value),
+    quantidade: Number(formulario.elements.qtd.value),
+  };
+
+  fetch(`${API_URL}/produto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(produto),
+  })
+    .then(async (resposta) => {
+      const resultado = await resposta.json();
+      if (!resposta.ok) throw new Error(resultado.erros?.join(' ') || resultado.erro || 'Falha ao cadastrar produto.');
+      formulario.reset();
+      msg.textContent = 'Produto cadastrado com sucesso.';
+      formulario.elements.nome.focus();
+    })
+    .catch((err) => {
+      msg.textContent = `Não foi possível cadastrar o produto: ${err.message}`;
+    });
+});
+
+window.addEventListener('hashchange', rotear);
+rotear();
+</script>
+</body>
+</html>
